@@ -226,7 +226,7 @@ The backend features automated unit and integration tests using **JUnit 5**, **M
 
 To execute the test suite:
 ```powershell
-$env:JAVA_HOME = "C:\Users\ankit\.jdks\openjdk-19.0.2"
+$env:JAVA_HOME = "$env:USERPROFILE\.jdks\openjdk-19.0.2"
 .\mvnw.cmd test
 ```
 
