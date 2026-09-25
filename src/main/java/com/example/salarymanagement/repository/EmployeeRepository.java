@@ -30,7 +30,7 @@ public interface EmployeeRepository extends JpaRepository<Employee, Long> {
         SELECT e FROM Employee e
         WHERE (:departmentId IS NULL OR e.department.id = :departmentId)
           AND (:countryCode IS NULL OR e.country.countryCode = :countryCode)
-          AND (:status IS NULL OR e.status = :status)
+          AND (:status IS NULL OR UPPER(e.status) = UPPER(:status))
           AND (:search IS NULL OR LOWER(e.firstName) LIKE LOWER(CONCAT('%', :search, '%'))
                                OR LOWER(e.lastName) LIKE LOWER(CONCAT('%', :search, '%'))
                                OR LOWER(e.empCode) LIKE LOWER(CONCAT('%', :search, '%'))

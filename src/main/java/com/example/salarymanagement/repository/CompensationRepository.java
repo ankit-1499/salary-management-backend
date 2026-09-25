@@ -19,16 +19,16 @@ public interface CompensationRepository extends JpaRepository<Compensation, Long
 
     Optional<Compensation> findByEmployeeId(Long employeeId);
 
-    @Query("SELECT SUM(c.basePay + c.pfDeduction + c.otherDeductions) FROM Compensation c")
+    @Query("SELECT SUM(c.basePay + c.pfDeduction + c.otherDeductions) FROM Compensation c WHERE UPPER(c.employee.status) = 'ACTIVE'")
     BigDecimal getTotalCompanyCost();
 
-    @Query("SELECT AVG(c.basePay) FROM Compensation c")
+    @Query("SELECT AVG(c.basePay) FROM Compensation c WHERE UPPER(c.employee.status) = 'ACTIVE'")
     BigDecimal getGlobalAverageBaseSalary();
 
     @Query("SELECT COUNT(e) FROM Employee e WHERE UPPER(e.status) = 'ACTIVE'")
     Long getActiveHeadcount();
 
-    @Query("SELECT (c.basePay + c.pfDeduction + c.otherDeductions) FROM Compensation c ORDER BY (c.basePay + c.pfDeduction + c.otherDeductions) ASC")
+    @Query("SELECT (c.basePay + c.pfDeduction + c.otherDeductions) FROM Compensation c WHERE UPPER(c.employee.status) = 'ACTIVE' ORDER BY (c.basePay + c.pfDeduction + c.otherDeductions) ASC")
     List<BigDecimal> getAllSortedCtcValues();
 
     @Query("""
@@ -40,6 +40,7 @@ public interface CompensationRepository extends JpaRepository<Compensation, Long
             SUM(c.basePay + c.pfDeduction + c.otherDeductions)
         )
         FROM Employee e JOIN e.compensation c
+        WHERE UPPER(e.status) = 'ACTIVE'
         GROUP BY e.country.countryCode, e.country.countryName
         ORDER BY SUM(c.basePay + c.pfDeduction + c.otherDeductions) DESC
     """)
@@ -54,6 +55,7 @@ public interface CompensationRepository extends JpaRepository<Compensation, Long
             SUM(c.basePay + c.pfDeduction + c.otherDeductions)
         )
         FROM Employee e JOIN e.compensation c
+        WHERE UPPER(e.status) = 'ACTIVE'
         GROUP BY e.department.id, e.department.name, e.department.code
         ORDER BY SUM(c.basePay + c.pfDeduction + c.otherDeductions) DESC
     """)
@@ -72,6 +74,7 @@ public interface CompensationRepository extends JpaRepository<Compensation, Long
             (c.basePay + c.pfDeduction + c.otherDeductions)
         )
         FROM Employee e JOIN e.compensation c
+        WHERE UPPER(e.status) = 'ACTIVE'
         ORDER BY (c.basePay + c.pfDeduction + c.otherDeductions) DESC
     """)
     List<TopEarnerDTO> findTopEarnersGlobally(Pageable pageable);
@@ -89,7 +92,7 @@ public interface CompensationRepository extends JpaRepository<Compensation, Long
             (c.basePay + c.pfDeduction + c.otherDeductions)
         )
         FROM Employee e JOIN e.compensation c
-        WHERE e.country.countryCode = :countryCode
+        WHERE e.country.countryCode = :countryCode AND UPPER(e.status) = 'ACTIVE'
         ORDER BY (c.basePay + c.pfDeduction + c.otherDeductions) DESC
     """)
     List<TopEarnerDTO> findTopEarnersByCountry(@Param("countryCode") String countryCode, Pageable pageable);
