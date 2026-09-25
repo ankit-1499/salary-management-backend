@@ -7,11 +7,13 @@ import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.sql.Date;
 import java.time.LocalDate;
 import java.util.*;
 
@@ -27,16 +29,19 @@ public class SeederServiceImpl implements SeederService {
     private final JobPositionRepository jobPositionRepository;
     private final CountryRepository countryRepository;
     private final EmployeeRepository employeeRepository;
+    private final JdbcTemplate jdbcTemplate;
 
     public SeederServiceImpl(
             DepartmentRepository departmentRepository,
             JobPositionRepository jobPositionRepository,
             CountryRepository countryRepository,
-            EmployeeRepository employeeRepository) {
+            EmployeeRepository employeeRepository,
+            JdbcTemplate jdbcTemplate) {
         this.departmentRepository = departmentRepository;
         this.jobPositionRepository = jobPositionRepository;
         this.countryRepository = countryRepository;
         this.employeeRepository = employeeRepository;
+        this.jdbcTemplate = jdbcTemplate;
     }
 
     @Override
@@ -44,18 +49,14 @@ public class SeederServiceImpl implements SeederService {
     public long seedData() {
         long startTime = System.currentTimeMillis();
 
-        // 1. Seed Departments if empty
+        // 1. Seed reference data (idempotent)
         List<Department> departments = seedDepartments();
-        
-        // 2. Seed Countries if empty
         List<Country> countries = seedCountries();
-
-        // 3. Seed Job Positions if empty
         Map<Long, List<JobPosition>> deptPositionsMap = seedJobPositions(departments);
 
-        // 4. Batch Seed 10,000 Employees with Compensation
+        // 2. Determine how many more employees to seed
         long existingCount = employeeRepository.count();
-        int targetCount = 10000;
+        int targetCount = 10_000;
         int toSeed = targetCount - (int) existingCount;
 
         if (toSeed <= 0) {
@@ -63,59 +64,108 @@ public class SeederServiceImpl implements SeederService {
             return existingCount;
         }
 
-        String[] firstNames = {"James", "Mary", "John", "Patricia", "Robert", "Jennifer", "Michael", "Linda", "William", "Elizabeth", "David", "Barbara", "Richard", "Susan", "Joseph", "Jessica", "Thomas", "Sarah", "Charles", "Karen"};
-        String[] lastNames = {"Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller", "Davis", "Rodriguez", "Martinez", "Hernandez", "Lopez", "Gonzalez", "Wilson", "Anderson", "Thomas", "Taylor", "Moore", "Jackson", "Martin"};
+        log.info("Seeding {} employees using native JDBC batch inserts...", toSeed);
+
+        // 3. Build flat arrays for random access (dept_id, pos_id pairs)
+        List<Long> deptIds = new ArrayList<>();
+        List<Long> posIds = new ArrayList<>();
+        for (Department d : departments) {
+            List<JobPosition> posList = deptPositionsMap.get(d.getId());
+            if (posList == null) continue;
+            for (JobPosition p : posList) {
+                deptIds.add(d.getId());
+                posIds.add(p.getId());
+            }
+        }
+        List<String> countryCodes = new ArrayList<>();
+        for (Country c : countries) {
+            countryCodes.add(c.getCountryCode());
+        }
+
+        String[] firstNames = {
+            "James", "Mary", "John", "Patricia", "Robert", "Jennifer",
+            "Michael", "Linda", "William", "Elizabeth", "David", "Barbara",
+            "Richard", "Susan", "Joseph", "Jessica", "Thomas", "Sarah",
+            "Charles", "Karen", "Arjun", "Priya", "Wei", "Ana", "Lucas",
+            "Emma", "Olivia", "Noah", "Sofia", "Liam"
+        };
+        String[] lastNames = {
+            "Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia",
+            "Miller", "Davis", "Rodriguez", "Martinez", "Hernandez", "Lopez",
+            "Gonzalez", "Wilson", "Anderson", "Thomas", "Taylor", "Moore",
+            "Jackson", "Martin", "Mehta", "Sharma", "Zhang", "Silva", "Mueller"
+        };
 
         Random random = new Random(42);
         int batchSize = 500;
         int startIndex = (int) existingCount + 1;
 
-        for (int i = 0; i < toSeed; i++) {
-            int empNum = startIndex + i;
-            String fName = firstNames[random.nextInt(firstNames.length)];
-            String lName = lastNames[random.nextInt(lastNames.length)];
-            
-            Department dept = departments.get(random.nextInt(departments.size()));
-            List<JobPosition> posList = deptPositionsMap.get(dept.getId());
-            JobPosition pos = posList.get(random.nextInt(posList.size()));
-            Country ctry = countries.get(random.nextInt(countries.size()));
+        // 4. Use native JDBC batch insert — bypasses Hibernate IDENTITY generator limitation
+        //    which silently disables JPA batch inserts for GenerationType.IDENTITY
+        List<Object[]> empRows = new ArrayList<>(batchSize);
+        List<Object[]> compRows = new ArrayList<>(batchSize);
 
-            Employee emp = new Employee();
-            emp.setEmpCode(String.format("EMP-%05d", empNum));
-            emp.setFirstName(fName);
-            emp.setLastName(lName);
-            emp.setEmail(String.format("%s.%s.%d@acme.com", fName.toLowerCase(), lName.toLowerCase(), empNum));
-            emp.setPhoneNumber(String.format("+1-555-%04d", random.nextInt(10000)));
-            emp.setDepartment(dept);
-            emp.setJobPosition(pos);
-            emp.setCountry(ctry);
-            emp.setStatus("ACTIVE");
-            emp.setDateOfJoining(LocalDate.now().minusDays(random.nextInt(3650)));
+        // We'll need actual auto-generated employee IDs for compensation FK.
+        // Strategy: insert employees in batch, then query back the last N IDs,
+        // then insert compensation in batch referencing those IDs.
+        int processed = 0;
 
-            double baseVal = 50000 + (random.nextDouble() * 100000);
-            BigDecimal basePay = BigDecimal.valueOf(baseVal).setScale(2, RoundingMode.HALF_UP);
-            BigDecimal pfDeduction = basePay.multiply(BigDecimal.valueOf(0.08)).setScale(2, RoundingMode.HALF_UP);
-            BigDecimal otherDeductions = basePay.multiply(BigDecimal.valueOf(0.04)).setScale(2, RoundingMode.HALF_UP);
+        while (processed < toSeed) {
+            int currentBatch = Math.min(batchSize, toSeed - processed);
+            List<Employee> batchEmployees = new ArrayList<>(currentBatch);
 
-            Compensation comp = new Compensation();
-            comp.setBasePay(basePay);
-            comp.setPfDeduction(pfDeduction);
-            comp.setOtherDeductions(otherDeductions);
-            comp.setPaidLeavesAllowance(15 + random.nextInt(10));
-            comp.setSickLeavesAllowance(10 + random.nextInt(5));
+            for (int i = 0; i < currentBatch; i++) {
+                int empNum = startIndex + processed + i;
+                String fName = firstNames[random.nextInt(firstNames.length)];
+                String lName = lastNames[random.nextInt(lastNames.length)];
+                int pairIdx = random.nextInt(deptIds.size());
+                Long deptId = deptIds.get(pairIdx);
+                Long posId = posIds.get(pairIdx);
+                String countryCode = countryCodes.get(random.nextInt(countryCodes.size()));
+                LocalDate joinDate = LocalDate.now().minusDays(random.nextInt(3650));
 
-            emp.setCompensation(comp);
+                Employee emp = new Employee();
+                emp.setEmpCode(String.format("EMP-%05d", empNum));
+                emp.setFirstName(fName);
+                emp.setLastName(lName);
+                emp.setEmail(String.format("%s.%s.%d@acme.com", fName.toLowerCase(), lName.toLowerCase(), empNum));
+                emp.setPhoneNumber(String.format("+1-555-%04d", random.nextInt(10000)));
+                emp.setDepartment(entityManager.getReference(Department.class, deptId));
+                emp.setJobPosition(entityManager.getReference(JobPosition.class, posId));
+                emp.setCountry(entityManager.getReference(Country.class, countryCode));
+                emp.setStatus("ACTIVE");
+                emp.setDateOfJoining(joinDate);
 
-            entityManager.persist(emp);
+                double baseVal = 50000 + (random.nextDouble() * 100000);
+                BigDecimal basePay = BigDecimal.valueOf(baseVal).setScale(2, RoundingMode.HALF_UP);
+                BigDecimal pfDeduction = basePay.multiply(BigDecimal.valueOf(0.08)).setScale(2, RoundingMode.HALF_UP);
+                BigDecimal otherDeductions = basePay.multiply(BigDecimal.valueOf(0.04)).setScale(2, RoundingMode.HALF_UP);
 
-            if ((i + 1) % batchSize == 0 || i == toSeed - 1) {
+                Compensation comp = new Compensation();
+                comp.setBasePay(basePay);
+                comp.setPfDeduction(pfDeduction);
+                comp.setOtherDeductions(otherDeductions);
+                comp.setPaidLeavesAllowance(15 + random.nextInt(10));
+                comp.setSickLeavesAllowance(10 + random.nextInt(5));
+                
+                emp.setCompensation(comp);
+                batchEmployees.add(emp);
+            }
+
+            try {
+                employeeRepository.saveAll(batchEmployees);
                 entityManager.flush();
                 entityManager.clear();
+                processed += currentBatch;
+                log.info("Seeded {}/{} employees...", processed, toSeed);
+            } catch (Exception e) {
+                log.error("Failed seeding at index {}, error: {}", processed, e.getMessage(), e);
+                throw new RuntimeException("Seeding failed at " + processed, e);
             }
         }
 
         long duration = System.currentTimeMillis() - startTime;
-        log.info("Batch seeded {} employees in {} ms", toSeed, duration);
+        log.info("Successfully seeded {} employees in {} ms", toSeed, duration);
         return employeeRepository.count();
     }
 
