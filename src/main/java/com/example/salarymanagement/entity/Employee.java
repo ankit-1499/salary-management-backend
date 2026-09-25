@@ -36,7 +36,7 @@ public class Employee {
     private JobPosition jobPosition;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "country_code", nullable = false)
+    @JoinColumn(name = "country_code", nullable = false, columnDefinition = "CHAR(3)")
     private Country country;
 
     @Column(nullable = false)

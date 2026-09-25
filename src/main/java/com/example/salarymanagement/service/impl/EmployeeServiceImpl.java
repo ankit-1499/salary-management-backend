@@ -119,6 +119,10 @@ public class EmployeeServiceImpl implements EmployeeService {
         compensation.setPaidLeavesAllowance(updateDTO.paidLeavesAllowance());
         compensation.setSickLeavesAllowance(updateDTO.sickLeavesAllowance());
 
+        if (updateDTO.status() != null && !updateDTO.status().trim().isEmpty()) {
+            employee.setStatus(updateDTO.status().trim());
+        }
+
         employeeRepository.save(employee);
         return mapToResponseDTO(employee);
     }

@@ -23,5 +23,7 @@ public record SalaryUpdateDTO(
 
     @NotNull(message = "Sick leaves allowance is required")
     @Min(value = 0, message = "Sick leaves allowance cannot be negative")
-    Integer sickLeavesAllowance
+    Integer sickLeavesAllowance,
+
+    String status
 ) {}

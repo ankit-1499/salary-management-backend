@@ -112,7 +112,7 @@ class EmployeeServiceTest {
 
         assertThrows(ResourceNotFoundException.class, () -> employeeService.getEmployeeById(999L));
         
-        SalaryUpdateDTO updateDTO = new SalaryUpdateDTO(new BigDecimal("50000"), new BigDecimal("1000"), new BigDecimal("500"), 10, 5);
+        SalaryUpdateDTO updateDTO = new SalaryUpdateDTO(new BigDecimal("50000"), new BigDecimal("1000"), new BigDecimal("500"), 10, 5, null);
         assertThrows(ResourceNotFoundException.class, () -> employeeService.updateEmployeeSalary(999L, updateDTO));
     }
 }
