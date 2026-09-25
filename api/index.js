@@ -13,6 +13,7 @@ app.use(express.json());
 
 // ─── Schema Setup Utility ──────────────────────────────────────────────────────
 async function ensureSchemaCreated(conn) {
+  // Drop old tables if incompatible or ensure columns
   await conn.query(`
     CREATE TABLE IF NOT EXISTS countries (
       country_code VARCHAR(2) PRIMARY KEY,
@@ -35,22 +36,45 @@ async function ensureSchemaCreated(conn) {
       first_name VARCHAR(100) NOT NULL,
       last_name VARCHAR(100) NOT NULL,
       email VARCHAR(150) NOT NULL UNIQUE,
-      job_title VARCHAR(100) NOT NULL,
+      job_title VARCHAR(100) NOT NULL DEFAULT 'Employee',
       status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
-      country_code VARCHAR(2) NOT NULL,
-      department_id INT NOT NULL,
-      hire_date DATE NOT NULL,
+      country_code VARCHAR(2) NOT NULL DEFAULT 'US',
+      department_id INT NOT NULL DEFAULT 1,
+      hire_date DATE DEFAULT '2023-01-01',
       INDEX idx_country (country_code),
       INDEX idx_dept (department_id),
       INDEX idx_status (status)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
 
+  // Migration checks for missing columns on existing tables
+  try {
+    const [cols] = await conn.query('SHOW COLUMNS FROM employees');
+    const colNames = cols.map(c => c.Field);
+    if (!colNames.includes('job_title')) {
+      await conn.query("ALTER TABLE employees ADD COLUMN job_title VARCHAR(100) NOT NULL DEFAULT 'Employee'");
+    }
+    if (!colNames.includes('status')) {
+      await conn.query("ALTER TABLE employees ADD COLUMN status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE'");
+    }
+    if (!colNames.includes('country_code')) {
+      await conn.query("ALTER TABLE employees ADD COLUMN country_code VARCHAR(2) NOT NULL DEFAULT 'US'");
+    }
+    if (!colNames.includes('department_id')) {
+      await conn.query("ALTER TABLE employees ADD COLUMN department_id INT NOT NULL DEFAULT 1");
+    }
+    if (!colNames.includes('hire_date')) {
+      await conn.query("ALTER TABLE employees ADD COLUMN hire_date DATE DEFAULT '2023-01-01'");
+    }
+  } catch (e) {
+    console.error('Migration warning:', e.message);
+  }
+
   await conn.query(`
     CREATE TABLE IF NOT EXISTS compensation (
       id INT AUTO_INCREMENT PRIMARY KEY,
       employee_id INT NOT NULL UNIQUE,
-      base_pay DECIMAL(12,2) NOT NULL,
+      base_pay DECIMAL(12,2) NOT NULL DEFAULT 0.00,
       pf_deduction DECIMAL(12,2) NOT NULL DEFAULT 0.00,
       other_deductions DECIMAL(12,2) NOT NULL DEFAULT 0.00,
       INDEX idx_employee (employee_id)
@@ -123,9 +147,9 @@ app.post('/api/v1/seed', async (req, res) => {
     const [deptRows] = await conn.query('SELECT id FROM departments');
     const deptIds = deptRows.map(r => r.id);
 
-    // 3. Clear existing employees/compensation for fresh seed if total < 10000
+    // 3. Clear existing data if resetting or seeding fresh
     const [empCountRow] = await conn.query('SELECT COUNT(*) as count FROM employees');
-    const currentEmpCount = empCountRow[0].count;
+    let currentEmpCount = empCountRow[0].count;
 
     const targetCount = 10000;
     if (currentEmpCount >= targetCount) {
@@ -137,7 +161,6 @@ app.post('/api/v1/seed', async (req, res) => {
       });
     }
 
-    // Generate remaining employees to reach 10,000
     const toCreate = targetCount - currentEmpCount;
     const firstNames = ['James', 'Mary', 'John', 'Patricia', 'Robert', 'Jennifer', 'Michael', 'Linda', 'William', 'Elizabeth', 'David', 'Barbara', 'Richard', 'Susan', 'Joseph', 'Jessica', 'Thomas', 'Sarah', 'Charles', 'Karen', 'Rahul', 'Priya', 'Amit', 'Neha', 'Sanjay', 'Ananya', 'Vikram', 'Pooja', 'Alex', 'Elena', 'Hans', 'Yuki', 'Carlos', 'Fatima', 'Jean', 'Sophie'];
     const lastNames = ['Smith', 'Johnson', 'Williams', 'Brown', 'Jones', 'Garcia', 'Miller', 'Davis', 'Rodriguez', 'Martinez', 'Hernandez', 'Lopez', 'Gonzalez', 'Wilson', 'Anderson', 'Thomas', 'Sharma', 'Patel', 'Verma', 'Kumar', 'Singh', 'Gupta', 'Muller', 'Sato', 'Tanaka', 'Silva', 'Dubois'];
