@@ -13,33 +13,32 @@ app.use(express.json());
 
 // ─── Schema Setup Utility ──────────────────────────────────────────────────────
 async function ensureSchemaCreated(conn) {
-  // Drop old tables if incompatible or ensure columns
   await conn.query(`
     CREATE TABLE IF NOT EXISTS countries (
-      country_code VARCHAR(2) PRIMARY KEY,
-      country_name VARCHAR(100) NOT NULL,
-      latitude DOUBLE DEFAULT 0,
-      longitude DOUBLE DEFAULT 0
+      country_code CHAR(3) PRIMARY KEY,
+      country_name VARCHAR(255) NOT NULL,
+      currency_code CHAR(3) NOT NULL DEFAULT 'USD'
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
 
   await conn.query(`
     CREATE TABLE IF NOT EXISTS departments (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      department_name VARCHAR(100) NOT NULL UNIQUE
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      name VARCHAR(255) NOT NULL,
+      code VARCHAR(255) NOT NULL UNIQUE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
 
   await conn.query(`
     CREATE TABLE IF NOT EXISTS employees (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      first_name VARCHAR(100) NOT NULL,
-      last_name VARCHAR(100) NOT NULL,
-      email VARCHAR(150) NOT NULL UNIQUE,
-      job_title VARCHAR(100) NOT NULL DEFAULT 'Employee',
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      first_name VARCHAR(255) NOT NULL,
+      last_name VARCHAR(255) NOT NULL,
+      email VARCHAR(255) NOT NULL UNIQUE,
+      job_title VARCHAR(255) NOT NULL DEFAULT 'Employee',
       status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
-      country_code VARCHAR(2) NOT NULL DEFAULT 'US',
-      department_id INT NOT NULL DEFAULT 1,
+      country_code CHAR(3) NOT NULL DEFAULT 'USA',
+      department_id BIGINT NOT NULL DEFAULT 1,
       hire_date DATE DEFAULT '2023-01-01',
       INDEX idx_country (country_code),
       INDEX idx_dept (department_id),
@@ -47,39 +46,32 @@ async function ensureSchemaCreated(conn) {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
 
-  // Migration checks for missing columns on existing tables
+  await conn.query(`
+    CREATE TABLE IF NOT EXISTS compensation (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      employee_id BIGINT NOT NULL UNIQUE,
+      base_pay DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+      pf_deduction DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+      other_deductions DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+      paid_leaves_allowance INT NOT NULL DEFAULT 20,
+      sick_leaves_allowance INT NOT NULL DEFAULT 10,
+      INDEX idx_employee (employee_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  // Ensure department table column alias migration
   try {
-    const [cols] = await conn.query('SHOW COLUMNS FROM employees');
+    const [cols] = await conn.query('SHOW COLUMNS FROM departments');
     const colNames = cols.map(c => c.Field);
-    if (!colNames.includes('job_title')) {
-      await conn.query("ALTER TABLE employees ADD COLUMN job_title VARCHAR(100) NOT NULL DEFAULT 'Employee'");
+    if (!colNames.includes('name') && colNames.includes('department_name')) {
+      await conn.query('ALTER TABLE departments CHANGE COLUMN department_name name VARCHAR(255) NOT NULL');
     }
-    if (!colNames.includes('status')) {
-      await conn.query("ALTER TABLE employees ADD COLUMN status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE'");
-    }
-    if (!colNames.includes('country_code')) {
-      await conn.query("ALTER TABLE employees ADD COLUMN country_code VARCHAR(2) NOT NULL DEFAULT 'US'");
-    }
-    if (!colNames.includes('department_id')) {
-      await conn.query("ALTER TABLE employees ADD COLUMN department_id INT NOT NULL DEFAULT 1");
-    }
-    if (!colNames.includes('hire_date')) {
-      await conn.query("ALTER TABLE employees ADD COLUMN hire_date DATE DEFAULT '2023-01-01'");
+    if (!colNames.includes('code')) {
+      await conn.query("ALTER TABLE departments ADD COLUMN code VARCHAR(255) NOT NULL DEFAULT 'DEPT'");
     }
   } catch (e) {
     console.error('Migration warning:', e.message);
   }
-
-  await conn.query(`
-    CREATE TABLE IF NOT EXISTS compensation (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      employee_id INT NOT NULL UNIQUE,
-      base_pay DECIMAL(12,2) NOT NULL DEFAULT 0.00,
-      pf_deduction DECIMAL(12,2) NOT NULL DEFAULT 0.00,
-      other_deductions DECIMAL(12,2) NOT NULL DEFAULT 0.00,
-      INDEX idx_employee (employee_id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-  `);
 }
 
 // ─── Health ───────────────────────────────────────────────────────────────────
@@ -110,35 +102,43 @@ app.post('/api/v1/seed', async (req, res) => {
     const [existingCountries] = await conn.query('SELECT COUNT(*) as count FROM countries');
     if (existingCountries[0].count === 0) {
       const countriesData = [
-        ['US', 'United States', 37.0902, -95.7129],
-        ['IN', 'India', 20.5937, 78.9629],
-        ['GB', 'United Kingdom', 55.3781, -3.4360],
-        ['JP', 'Japan', 36.2048, 138.2529],
-        ['DE', 'Germany', 51.1657, 10.4515],
-        ['CA', 'Canada', 56.1304, -106.3468],
-        ['AU', 'Australia', -25.2744, 133.7751],
-        ['BR', 'Brazil', -14.2350, -51.9253],
-        ['FR', 'France', 46.2276, 2.2137],
-        ['SG', 'Singapore', 1.3521, 103.8198],
-        ['ES', 'Spain', 40.4637, -3.7492],
-        ['IT', 'Italy', 41.8719, 12.5674],
-        ['NL', 'Netherlands', 52.1326, 5.2913],
-        ['SE', 'Sweden', 60.1282, 18.6435],
-        ['CH', 'Switzerland', 46.8182, 8.2275],
-        ['MX', 'Mexico', 23.6345, -102.5528],
-        ['KR', 'South Korea', 35.9078, 127.7669]
+        ['USA', 'United States', 'USD'],
+        ['IND', 'India', 'INR'],
+        ['GBR', 'United Kingdom', 'GBP'],
+        ['JPN', 'Japan', 'JPY'],
+        ['DEU', 'Germany', 'EUR'],
+        ['CAN', 'Canada', 'CAD'],
+        ['AUS', 'Australia', 'AUD'],
+        ['BRA', 'Brazil', 'BRL'],
+        ['FRA', 'France', 'EUR'],
+        ['SGP', 'Singapore', 'SGD'],
+        ['ESP', 'Spain', 'EUR'],
+        ['ITA', 'Italy', 'EUR'],
+        ['NLD', 'Netherlands', 'EUR'],
+        ['SWE', 'Sweden', 'SEK'],
+        ['CHE', 'Switzerland', 'CHF'],
+        ['MEX', 'Mexico', 'MXN'],
+        ['KOR', 'South Korea', 'KRW']
       ];
-      await conn.query('INSERT IGNORE INTO countries (country_code, country_name, latitude, longitude) VALUES ?', [countriesData]);
+      await conn.query('INSERT IGNORE INTO countries (country_code, country_name, currency_code) VALUES ?', [countriesData]);
     }
 
     // 2. Seed Departments if empty
     const [existingDepts] = await conn.query('SELECT COUNT(*) as count FROM departments');
     if (existingDepts[0].count === 0) {
       const depts = [
-        ['Engineering'], ['Human Resources'], ['Sales'], ['Marketing'], ['Finance'],
-        ['Product Management'], ['Design'], ['Legal'], ['Operations'], ['Quality Assurance']
+        ['Engineering', 'ENG'],
+        ['Human Resources', 'HR'],
+        ['Sales', 'SALES'],
+        ['Marketing', 'MKTG'],
+        ['Finance', 'FIN'],
+        ['Product Management', 'PROD'],
+        ['Design', 'DESIGN'],
+        ['Legal', 'LEGAL'],
+        ['Operations', 'OPS'],
+        ['Quality Assurance', 'QA']
       ];
-      await conn.query('INSERT IGNORE INTO departments (department_name) VALUES ?', [depts]);
+      await conn.query('INSERT IGNORE INTO departments (name, code) VALUES ?', [depts]);
     }
 
     // Retrieve country codes and department IDs
@@ -147,7 +147,7 @@ app.post('/api/v1/seed', async (req, res) => {
     const [deptRows] = await conn.query('SELECT id FROM departments');
     const deptIds = deptRows.map(r => r.id);
 
-    // 3. Clear existing data if resetting or seeding fresh
+    // 3. Check current employees count
     const [empCountRow] = await conn.query('SELECT COUNT(*) as count FROM employees');
     let currentEmpCount = empCountRow[0].count;
 
@@ -179,7 +179,7 @@ app.post('/api/v1/seed', async (req, res) => {
         const ln = lastNames[Math.floor(Math.random() * lastNames.length)];
         const email = `${fn.toLowerCase()}.${ln.toLowerCase()}.${idx}@acme-corp.com`;
         const title = jobTitles[Math.floor(Math.random() * jobTitles.length)];
-        const status = (idx % 100 === 0) ? 'TERMINATED' : 'ACTIVE'; // 1% terminated
+        const status = (idx % 100 === 0) ? 'TERMINATED' : 'ACTIVE';
         const cc = countryCodes[Math.floor(Math.random() * countryCodes.length)];
         const deptId = deptIds[Math.floor(Math.random() * deptIds.length)];
         const hireDate = new Date(2018 + Math.floor(Math.random() * 6), Math.floor(Math.random() * 12), 1 + Math.floor(Math.random() * 28)).toISOString().split('T')[0];
@@ -199,11 +199,11 @@ app.post('/api/v1/seed', async (req, res) => {
         const basePay = Math.floor(45000 + Math.random() * 110000);
         const pf = Math.floor(basePay * 0.05);
         const other = Math.floor(basePay * 0.02);
-        compValues.push([empId, basePay, pf, other]);
+        compValues.push([empId, basePay, pf, other, 20, 10]);
       }
 
       await conn.query(
-        'INSERT INTO compensation (employee_id, base_pay, pf_deduction, other_deductions) VALUES ?',
+        'INSERT INTO compensation (employee_id, base_pay, pf_deduction, other_deductions, paid_leaves_allowance, sick_leaves_allowance) VALUES ?',
         [compValues]
       );
 
@@ -293,7 +293,7 @@ app.get('/api/v1/analytics/breakdown/department', async (req, res) => {
     const [rows] = await conn.query(`
       SELECT
         d.id AS departmentId,
-        d.department_name AS departmentName,
+        d.name AS departmentName,
         COUNT(e.id) AS headcount,
         COALESCE(AVG(c.base_pay), 0) AS averageBaseSalary,
         COALESCE(SUM(c.base_pay + c.pf_deduction + c.other_deductions), 0) AS totalCtcSpend
@@ -301,7 +301,7 @@ app.get('/api/v1/analytics/breakdown/department', async (req, res) => {
       JOIN employees e ON e.department_id = d.id
       LEFT JOIN compensation c ON e.id = c.employee_id
       WHERE UPPER(e.status) = 'ACTIVE'
-      GROUP BY d.id, d.department_name
+      GROUP BY d.id, d.name
       ORDER BY headcount DESC
     `);
     conn.release();
@@ -326,7 +326,7 @@ app.get('/api/v1/analytics/top-earners', async (req, res) => {
     const countryCode = req.query.countryCode;
     let query = `
       SELECT e.id, e.first_name AS firstName, e.last_name AS lastName,
-             e.job_title AS jobTitle, d.department_name AS department,
+             e.job_title AS jobTitle, d.name AS department,
              e.country_code AS countryCode, c.base_pay AS basePay
       FROM employees e
       JOIN departments d ON e.department_id = d.id
@@ -386,7 +386,7 @@ app.get('/api/v1/employees', async (req, res) => {
       SELECT e.id, e.first_name AS firstName, e.last_name AS lastName,
              e.email, e.job_title AS jobTitle, e.status,
              e.country_code AS countryCode, e.hire_date AS hireDate,
-             d.department_name AS department, d.id AS departmentId,
+             d.name AS department, d.id AS departmentId,
              c.base_pay AS basePay, c.pf_deduction AS pfDeduction,
              c.other_deductions AS otherDeductions
       FROM employees e
@@ -435,7 +435,7 @@ app.get('/api/v1/employees/:id', async (req, res) => {
       SELECT e.id, e.first_name AS firstName, e.last_name AS lastName,
              e.email, e.job_title AS jobTitle, e.status,
              e.country_code AS countryCode, e.hire_date AS hireDate,
-             d.department_name AS department, d.id AS departmentId,
+             d.name AS department, d.id AS departmentId,
              c.base_pay AS basePay, c.pf_deduction AS pfDeduction,
              c.other_deductions AS otherDeductions
       FROM employees e
@@ -476,7 +476,7 @@ app.post('/api/v1/employees', async (req, res) => {
     const empId = result.insertId;
     if (basePay != null) {
       await conn.query(
-        'INSERT INTO compensation (employee_id, base_pay, pf_deduction, other_deductions) VALUES (?, ?, ?, ?)',
+        'INSERT INTO compensation (employee_id, base_pay, pf_deduction, other_deductions, paid_leaves_allowance, sick_leaves_allowance) VALUES (?, ?, ?, ?, 20, 10)',
         [empId, basePay, pfDeduction || 0, otherDeductions || 0]
       );
     }
@@ -509,7 +509,7 @@ app.put('/api/v1/employees/:id/salary', async (req, res) => {
       );
     } else {
       await conn.query(
-        'INSERT INTO compensation (employee_id, base_pay, pf_deduction, other_deductions) VALUES (?, ?, ?, ?)',
+        'INSERT INTO compensation (employee_id, base_pay, pf_deduction, other_deductions, paid_leaves_allowance, sick_leaves_allowance) VALUES (?, ?, ?, ?, 20, 10)',
         [empId, basePay, pfDeduction || 0, otherDeductions || 0]
       );
     }
@@ -528,7 +528,7 @@ app.get('/api/v1/departments', async (req, res) => {
   try {
     const conn = await pool.getConnection();
     await ensureSchemaCreated(conn);
-    const [rows] = await conn.query('SELECT id, department_name AS departmentName FROM departments ORDER BY department_name');
+    const [rows] = await conn.query('SELECT id, name AS departmentName FROM departments ORDER BY name');
     conn.release();
     res.json(rows);
   } catch (err) {
